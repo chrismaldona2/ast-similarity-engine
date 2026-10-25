@@ -36,6 +36,8 @@ Para lograr que la comparación no dependa de los nombres que eligió el program
 - **Parámetros y variables locales:** Los identificadores ligados al ámbito local (parámetros, asignaciones, variables de `for`, `with`, `except` y comprensiones) se van a reemplazar por tokens genéricos (`VAR1`, `VAR2`, etc.), manteniendo la correspondencia cada vez que aparezcan. La identificación considerará las reglas de ámbito de Python, incluyendo funciones anidadas y declaraciones `global` o `nonlocal`.
 - **Nombres libres y funciones invocadas:** Los nombres de funciones llamadas (`print`, `len`, helpers externos) e identificadores libres se van a conservar tal cual para no equiparar invocaciones a operaciones distintas.
 
+La recolección de nombres ligados se implementa mediante un `ast.NodeVisitor` (`_BoundNameCollector`) que recorre la función deteniendo el descenso al encontrar definiciones anidadas (`FunctionDef`, `AsyncFunctionDef`, `ClassDef`). De esta manera, el nombre de la función o clase interna queda registrado en el ámbito contenedor, pero sus parámetros, variables locales y declaraciones `global` o `nonlocal` permanecen aislados en su propio ámbito.
+
 ### 2.3. Tratamiento de atributos y métodos
 
 En expresiones de acceso (como `obj.append(value)`), se va a normalizar el identificador del objeto base cuando sea local, pero se conservará explícitamente el nombre del método o atributo. Si normalizáramos los métodos, no podríamos diferenciar operaciones opuestas (como `lista.append` frente a `lista.remove`).
