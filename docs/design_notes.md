@@ -18,7 +18,7 @@ En Python, los identificadores pueden estar "ligados" al ámbito local de una fu
 
 ### 1.3. Orden estructural y recorridos de árboles
 
-Para proyectar una estructura de árbol en una secuencia lineal comparable, el orden del recorrido es fundamental. Un recorrido en preorden (DFS) visita primero el nodo actual y luego sus hijos de izquierda a derecha (según el orden de campos `_fields` del AST). En cambio, `ast.walk()` no garantiza un orden específico de recorrido (en la práctica recorre el árbol por niveles, como se verificó en `lab/explore_ast.py`), por lo que no resulta adecuado cuando se requiere un orden reproducible en preorden. Por ello, se implementa un recorrido explícito mediante `ast.iter_child_nodes()`.
+Para proyectar una estructura de árbol en una secuencia lineal comparable, el orden del recorrido es fundamental. Un recorrido en preorden (DFS) visita primero el nodo actual y luego sus hijos de izquierda a derecha, según el orden de los campos del AST. En cambio, `ast.walk()` no garantiza un orden específico de recorrido, por lo que no resulta adecuado para construir directamente una secuencia de tokens cuando se requiere un orden reproducible en preorden. Por este motivo, se implementa un recorrido explícito mediante `ast.iter_child_nodes()`, que visita cada nodo antes que sus hijos y conserva el orden en que estos aparecen en la estructura del AST.
 
 ---
 
@@ -26,13 +26,14 @@ Para proyectar una estructura de árbol en una secuencia lineal comparable, el o
 
 ### 2.1. Recorrido estricto en preorden y formato de tokens
 
-Para convertir los árboles en secuencias de tokens (`src/serializer.py`), implementamos un recorrido estricto en preorden basado en `ast.iter_child_nodes()`, descartando `ast.walk()`. Esto mantiene contiguos los componentes de cada subárbol según el orden determinista de los campos `_fields` del AST.
+Para convertir los árboles en secuencias de tokens (`src/serializer.py`), se implementa un recorrido estricto en preorden basado en `ast.iter_child_nodes()`, descartando `ast.walk()`. Esto mantiene contiguos los componentes de cada subárbol según el orden de sus campos en el AST.
 
 Cada nodo visitado emite un único token:
 
 - **Nodos puramente estructurales** (`BinOp`, `Add`, `If`, `Return`, `Assign`): emiten únicamente el nombre de su tipo de nodo (`Tipo`).
-- **Nodos con valor semántico o normalizado** (`Name`, `arg`, `Constant`, `Attribute`, `FunctionDef`, `ClassDef`, `keyword`, `alias`, `ImportFrom`, `ExceptHandler`, capturas `match`): emiten un token compuesto `Tipo:valor` (por ejemplo, `Name:VAR1`, `Constant:LIT`, `Attribute:append`, `ImportFrom:os`). En los nodos `ast.alias`, se emite el nombre del elemento importado (`alias:numpy`) omitiendo el alias local en la declaración, aunque las referencias posteriores al alias en el cuerpo se conservan como nombres libres.
-- **Modo sin índice (`index_vars=False`):** El serializador incluye una opción para colapsar los subíndices de variables (`VAR1`, `VAR2` $\rightarrow$ `VAR`), permitiendo evaluar el impacto del reordenamiento de líneas independientes sobre la numeración de la tabla de símbolos.
+- **Nodos que incluyen un valor relevante** (`Name`, `arg`, `Constant`, `Attribute`, `FunctionDef`, `ClassDef`, `keyword`, `alias`, `ExceptHandler` y nodos de captura de patrones `match`): emiten un token compuesto `Tipo:valor`, por ejemplo, `Name:VAR`, `Constant:LIT` o `Attribute:append`.
+- **Importaciones:** los nodos `ast.ImportFrom` emiten únicamente el tipo `ImportFrom`, ya que el serializador no incorpora su módulo de origen como valor del token. En los nodos `ast.alias`, se emite el nombre del elemento importado, por ejemplo, `alias:numpy`. El alias local de la declaración no se incluye en ese token, aunque las referencias posteriores a dicho alias en el cuerpo se conservan como nombres.
+- **Modo sin índice (`index_vars=False`):** el serializador incluye una opción para colapsar los subíndices de variables (`VAR1`, `VAR2`, etc.) en un único token `VAR`. Esto reduce la sensibilidad a la numeración de variables, aunque no elimina la sensibilidad al orden de las sentencias en la secuencia serializada.
 
 ### 2.2. Normalización mediante tabla de símbolos local
 
@@ -45,7 +46,7 @@ Para lograr que la comparación no dependa de los nombres que eligió el program
 
 ### 2.3. Tratamiento de atributos y métodos
 
-En expresiones de acceso (como `obj.append(value)`), se va a normalizar el identificador del objeto base cuando corresponda a una variable local, pero se conservará explícitamente el nombre del método o atributo. Si normalizáramos los métodos, no podríamos diferenciar operaciones opuestas (como `lista.append` frente a `lista.remove`).
+En expresiones de acceso (como `obj.append(value)`), se normaliza el identificador del objeto base cuando corresponde a una variable local, pero se conserva explícitamente el nombre del método o atributo. Si se normalizaran los métodos, no podrían diferenciarse operaciones opuestas (como `lista.append` frente a `lista.remove`).
 
 ### 2.4. Simplificación de literales, documentación y tipos
 
@@ -54,29 +55,39 @@ En expresiones de acceso (como `obj.append(value)`), se va a normalizar el ident
 
 ### 2.5. Omisión de nodos de contexto
 
-Inicialmente vamos a omitir los nodos estructurales que indican el contexto de una variable (`Load`, `Store`, `Del`). Su inclusión genera n-gramas triviales de alta frecuencia (como `Name, Load, Add`) presentes en casi cualquier función, lo que incrementa el solapamiento entre funciones no relacionadas.
+Se omiten los nodos que representan el contexto de acceso a una variable (`Load`, `Store`, `Del`). Estos nodos indican si un identificador se lee, se asigna o se elimina, pero no aportan directamente el nombre de la operación ni la estructura principal que interesa comparar. Omitirlos simplifica las secuencias y evita introducir diferencias relacionadas exclusivamente con el contexto de acceso. Por ejemplo, una variable utilizada como operando y otra utilizada como destino de una asignación no generan tokens adicionales únicamente por sus respectivos contextos de acceso.
 
 ### 2.6. Extracción de funciones y nombres calificados
 
-El extractor va a capturar funciones estándar, asíncronas, métodos de clase y funciones anidadas. Una función anidada se extrae como función propia (`externa.interna`) y además permanece dentro del cuerpo de la función externa. Para evitar ambigüedades (por ejemplo, múltiples métodos `__init__` en un mismo archivo), el sistema guardará la ruta relativa del archivo y el nombre calificado (`Clase.metodo`).
+El extractor captura funciones estándar, asíncronas, métodos de clase y funciones anidadas. Una función anidada se extrae como función propia (`externa.interna`) y además permanece dentro del cuerpo de la función externa. Para evitar ambigüedades (por ejemplo, múltiples métodos `__init__` en un mismo archivo), el sistema guarda la ruta relativa del archivo y el nombre calificado (`Clase.metodo`).
 
-La construcción de nombres calificados se resuelve mediante un `ast.NodeVisitor` que mantiene una pila de ámbitos activos (`scope`) al entrar y salir de nodos `ClassDef`, `FunctionDef` y `AsyncFunctionDef`. Las expresiones `ast.Lambda` se excluyen de la extracción independiente dado que son expresiones anónimas y no definiciones de funciones. En caso de existir múltiples definiciones con el mismo nombre calificado en un mismo archivo (por ejemplo, propiedades con `@setter`), se diferenciarán por su número de línea (`lineno`).
+La construcción de nombres calificados se resuelve mediante un `ast.NodeVisitor` que mantiene una pila de ámbitos activos (`scope`) al entrar y salir de nodos `ClassDef`, `FunctionDef` y `AsyncFunctionDef`. Las expresiones `ast.Lambda` se excluyen de la extracción independiente dado que son expresiones anónimas y no definiciones de funciones. En caso de existir múltiples definiciones con el mismo nombre calificado en un mismo archivo (por ejemplo, propiedades con `@setter`), se diferencian por su número de línea (`lineno`).
 
 ---
 
-## 3. Métricas de similitud
+### 3. Métricas de similitud y calibración experimental
 
-Para comparar las secuencias de tokens vamos a utilizar dos métricas complementarias:
+Para comparar las secuencias de tokens se implementan dos métricas complementarias en `src/similarity.py`:
 
-1. **Índice de Jaccard sobre n-gramas:** Compara la intersección y la unión de los conjuntos de n-gramas de dos secuencias. Puede tolerar determinados cambios de orden de bloques independientes (clones de Tipo 3), aunque su comportamiento depende del tamaño de los n-gramas y de las estructuras comparadas.
-2. **Distancia de Levenshtein normalizada:** Considera las inserciones, eliminaciones y sustituciones necesarias para transformar una secuencia en otra. Permite evaluar diferencias de contenido y orden, aunque puede penalizar cambios estructurales que no alteran el comportamiento del programa.
+1. **Índice de Jaccard sobre conjuntos de n-gramas:** compara la intersección y la unión de los conjuntos de n-gramas contiguos de dos secuencias ($|A \cap B| / |A \cup B|$). Cuando una secuencia no vacía tiene menos de $n$ tokens, se la representa como un único tuplo con la secuencia completa para permitir su comparación sin descartarla. Como trabaja sobre conjuntos (`set`), no contabiliza la frecuencia de repetición de un mismo n-grama; una variante basada en multiconjuntos o `Counter` queda planteada como mejora futura.
+2. **Distancia de Levenshtein normalizada:** calcula el mínimo de inserciones, eliminaciones y sustituciones de tokens mediante programación dinámica, con memoria $O(\min(|A|, |B|))$, y normaliza el resultado como $1 - d(A, B) / \max(|A|, |B|)$. Evalúa diferencias tanto de contenido como de orden global.
 
-La combinación de ambas métricas, el tamaño de los n-gramas y el umbral de corte para definir cuándo dos funciones son candidatas a duplicado se evaluarán experimentalmente mediante casos de prueba.
+#### Calibración de hiperparámetros (`lab/calibrate.py`)
 
-## 4. Limitaciones conocidas
+Se evaluaron nueve pares de control: cuatro clones positivos con variables renombradas, sentencias independientes reordenadas o líneas adicionales, y cinco pares negativos con distinta lógica algorítmica. Se variaron el tamaño del n-grama, $n \in \{2,3,4\}$, y el modo de indexación `index_vars`.
 
-- **Equivalencia semántica vs. estructural:** Dos funciones que resuelven el mismo problema mediante algoritmos distintos (ej. recursividad vs. iteración) van a tener estructuras diferentes y obtendrán un puntaje bajo (clones de Tipo 4).
-- **Sensibilidad de la numeración `VARn` al reordenamiento:** Como los identificadores `VAR1`, `VAR2`, ... se asignan por orden de primera aparición, reordenar sentencias independientes que introducen variables nuevas puede permutar sus índices (`VAR3` $\leftrightarrow$ `VAR4`), reduciendo parcialmente el solapamiento de n-gramas.
-- **Sensibilidad de nombres libres, _closures_ e imports:** Como decidimos preservar los nombres libres y los alias de importación, si dos funciones clonadas llaman a funciones auxiliares o alias con nombres distintos, o si una función anidada captura variables de su función envolvente (_closures_) con nombres distintos, el motor penalizará su puntaje. Asimismo, si una función se define con el mismo nombre que un _built-in_ (ej. `def sum(...)`) e invoca dicho _built-in_ dentro de su cuerpo, la llamada se interpretará como recursiva (`FUNC`).
-- **Decoradores conservados:** Los decoradores de la función (`decorator_list`) se preservan en el árbol normalizado, por lo que diferencias en decoradores afectan la similitud estructural.
-- **Falsos positivos por simplicidad:** Las funciones demasiado cortas o triviales (ej. simples _getters/setters_) suelen compartir el mismo esqueleto AST, por lo que podrían superar el umbral de similitud aunque no estén relacionadas conceptualmente.
+- **Elección de `index_vars=False` como configuración predeterminada del motor:** con `index_vars=True` (`VAR1`, `VAR2`, etc.), reordenar asignaciones independientes altera el orden de primera aparición de las variables y reduce el puntaje de Jaccard con $n=3$ de `0.867` a `0.451`. Al colapsar los subíndices en `VAR` (`index_vars=False`), se recupera tolerancia a ese reordenamiento: el clon obtiene `0.867` con Jaccard y `0.846` con Levenshtein. En estos pares de control, Jaccard presenta un mayor margen de separación entre clones y no-clones (`0.447`) que Levenshtein (`0.119`).
+
+- **Elección del tamaño de n-grama ($n=3$):** con $n=2$, los pares negativos alcanzan una similitud máxima de `0.400`, con un margen de separación de `0.359`. Con $n=4$, el margen aumenta a `0.464`, pero los clones con una sentencia adicional pueden caer a `0.581`, haciéndose más sensibles a pequeñas inserciones. Con $n=3$, se obtiene un equilibrio entre tolerancia a cambios estructurales y discriminación: el margen es `0.447`, el puntaje del clon positivo menos similar es `0.667` y el puntaje del no-clon más similar es `0.220`.
+
+- **Umbrales diferenciados por métrica (`THRESHOLDS`):** Levenshtein produce puntajes más altos para algunos pares no relacionados: el máximo observado es `0.655`, frente a `0.220` con Jaccard. Por ello se establecen umbrales predeterminados independientes: **`0.50` para Jaccard ($n=3$) y `0.72` para Levenshtein**. En el conjunto de control evaluado con `index_vars=False`, ambos umbrales separan correctamente los nueve pares: el mayor puntaje negativo queda por debajo del umbral y el menor puntaje positivo, por encima. Estos valores provienen de un conjunto pequeño de ejemplos construidos manualmente; constituyen una calibración empírica inicial y no garantizan la misma separación en cualquier corpus.
+
+### 4. Limitaciones conocidas
+
+- **Equivalencia semántica frente a estructural:** dos funciones que resuelven el mismo problema mediante algoritmos distintos (por ejemplo, recursividad e iteración) pueden presentar estructuras diferentes y obtener un puntaje bajo.
+- **Compromiso de identidad de variables (`index_vars=False` frente a `True`):** en el modo predeterminado `index_vars=False`, las variables locales se representan con el mismo token `VAR`. Esto tolera mejor el reordenamiento de sentencias, pero pierde la distinción entre variables diferentes dentro de una expresión: por ejemplo, `a + a` y `a + b` pueden generar la misma secuencia. Con `index_vars=True`, la numeración `VARn` puede volverse sensible al orden de las sentencias.
+- **Simplificación de ámbitos:** las variables de comprensiones y los parámetros de `lambda` se tratan como parte del ámbito de la función contenedora, aunque Python tiene reglas de ámbito específicas para estas construcciones. Además, el tratamiento de los ámbitos de clase no está completamente aislado del de la función envolvente. Estas simplificaciones pueden afectar la normalización de programas más complejos.
+- **Nombres libres, cierres e importaciones:** al conservar los nombres libres y los alias de importación en sus usos dentro del cuerpo, dos funciones estructuralmente similares que llaman a funciones auxiliares o alias con nombres diferentes pueden obtener un puntaje menor. Lo mismo puede ocurrir si una función anidada captura variables de su función envolvente (_closures_) con nombres distintos.
+- **Detección de recursión:** si una función se define con el mismo nombre que un _built-in_ (por ejemplo, `sum`) e invoca dicho nombre dentro de su cuerpo, el normalizador puede interpretar esa referencia como recursiva y reemplazarla por `FUNC`.
+- **Decoradores conservados:** los decoradores de la función (`decorator_list`) se preservan en el árbol normalizado, por lo que sus diferencias afectan la similitud estructural.
+- **Falsos positivos por simplicidad:** las funciones demasiado cortas o triviales, como algunos _getters_ y _setters_, pueden compartir el mismo esqueleto AST y superar el umbral aunque no estén relacionadas conceptualmente.
