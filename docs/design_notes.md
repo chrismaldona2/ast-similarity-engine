@@ -18,15 +18,21 @@ En Python, los identificadores pueden estar "ligados" al ámbito local de una fu
 
 ### 1.3. Orden estructural y recorridos de árboles
 
-Para proyectar una estructura de árbol en una secuencia lineal comparable, el orden del recorrido es fundamental. Un recorrido en preorden (DFS) visita primero el nodo actual y luego sus hijos de izquierda a derecha (según el orden de campos `_fields` del AST). En cambio, la función `ast.walk()` recorre el árbol en anchura (BFS), como se verificó experimentalmente en `lab/explore_ast.py`, separando los encabezados de las sentencias de sus expresiones internas. Por este motivo, se requiere un recorrido explícito en preorden para generar una secuencia reproducible que conserve el orden estructural elegido para la comparación.
+Para proyectar una estructura de árbol en una secuencia lineal comparable, el orden del recorrido es fundamental. Un recorrido en preorden (DFS) visita primero el nodo actual y luego sus hijos de izquierda a derecha (según el orden de campos `_fields` del AST). En cambio, `ast.walk()` no garantiza un orden específico de recorrido (en la práctica recorre el árbol por niveles, como se verificó en `lab/explore_ast.py`), por lo que no resulta adecuado cuando se requiere un orden reproducible en preorden. Por ello, se implementa un recorrido explícito mediante `ast.iter_child_nodes()`.
 
 ---
 
 ## 2. Decisiones de diseño
 
-### 2.1. Recorrido estricto en preorden
+### 2.1. Recorrido estricto en preorden y formato de tokens
 
-Para convertir los árboles en secuencias de tokens, vamos a implementar un recorrido estricto en preorden basado en `ast.iter_child_nodes()` / `ast.NodeVisitor`, descartando el uso de `ast.walk()`. Esto mantiene contiguos los componentes de cada subárbol y refleja el orden natural de las sentencias.
+Para convertir los árboles en secuencias de tokens (`src/serializer.py`), implementamos un recorrido estricto en preorden basado en `ast.iter_child_nodes()`, descartando `ast.walk()`. Esto mantiene contiguos los componentes de cada subárbol según el orden determinista de los campos `_fields` del AST.
+
+Cada nodo visitado emite un único token:
+
+- **Nodos puramente estructurales** (`BinOp`, `Add`, `If`, `Return`, `Assign`): emiten únicamente el nombre de su tipo de nodo (`Tipo`).
+- **Nodos con valor semántico o normalizado** (`Name`, `arg`, `Constant`, `Attribute`, `FunctionDef`, `ClassDef`, `keyword`, `alias`, `ImportFrom`, `ExceptHandler`, capturas `match`): emiten un token compuesto `Tipo:valor` (por ejemplo, `Name:VAR1`, `Constant:LIT`, `Attribute:append`, `ImportFrom:os`). En los nodos `ast.alias`, se emite el nombre del elemento importado (`alias:numpy`) omitiendo el alias local en la declaración, aunque las referencias posteriores al alias en el cuerpo se conservan como nombres libres.
+- **Modo sin índice (`index_vars=False`):** El serializador incluye una opción para colapsar los subíndices de variables (`VAR1`, `VAR2` $\rightarrow$ `VAR`), permitiendo evaluar el impacto del reordenamiento de líneas independientes sobre la numeración de la tabla de símbolos.
 
 ### 2.2. Normalización mediante tabla de símbolos local
 
