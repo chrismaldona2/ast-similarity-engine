@@ -39,7 +39,7 @@ def parse_file(path: str | Path) -> ast.Module | None:
     """Parse a Python file; return None (and log a warning) if it cannot be parsed."""
     file_path = Path(path)
     try:
-        source = file_path.read_text(encoding="utf-8")
+        source = file_path.read_text(encoding="utf-8-sig")
         return ast.parse(source, filename=str(file_path))
     except (SyntaxError, UnicodeDecodeError, ValueError, OSError) as exc:
         logger.warning("Skipping %s: %s", file_path, exc)
