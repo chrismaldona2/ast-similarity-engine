@@ -12,7 +12,7 @@ def _tokens(source: str, **kwargs) -> list[str]:
 
 
 def test_exact_preorder_sequence():
-    assert _tokens("def sumar(a, b):\n    total = a + b\n    return total\n") == [
+    assert _tokens("def sumar(a, b):\n    total = a + b\n    return total\n", index_vars=True) == [
         "FunctionDef:FUNC",
         "arguments",
         "arg:VAR1",
@@ -45,7 +45,7 @@ def test_parent_comes_before_children():
 
 
 def test_attribute_name_and_literals_are_in_tokens():
-    tokens = _tokens("def f(items, v):\n    items.append(v)\n    return None\n")
+    tokens = _tokens("def f(items, v):\n    items.append(v)\n    return None\n", index_vars=True)
     assert tokens[tokens.index("Attribute:append") - 2 :][:5] == [
         "Expr",
         "Call",
@@ -54,7 +54,7 @@ def test_attribute_name_and_literals_are_in_tokens():
         "Name:VAR2",
     ]
     assert "Constant:None" in tokens
-    assert "Constant:LIT" in _tokens("def f():\n    return 5\n")
+    assert "Constant:LIT" in _tokens("def f():\n    return 5\n", index_vars=True)
 
 
 def test_index_vars_false_collapses_numbering():
@@ -69,7 +69,7 @@ def test_reordered_lines_differ_only_in_numbering():
     # Same multiset of nodes after dropping the numbering
     assert sorted(_tokens(a, index_vars=False)) == sorted(_tokens(b, index_vars=False))
     # but different sequences, as expected for reordered statements.
-    assert _tokens(a) != _tokens(b)
+    assert _tokens(a, index_vars=True) != _tokens(b, index_vars=True) 
 
 
 def test_serialize_tree_is_deterministic():

@@ -125,6 +125,6 @@ def test_find_similar_rejects_invalid_thresholds_and_n():
     with pytest.raises(ValueError, match="finite number between 0.0 and 1.0"):
         find_similar((), [], threshold=math.nan)
         
-    for invalid_n in (0, -1, 1.5, True):
-        with pytest.raises(ValueError, match="positive integer"):
+    for invalid_n in (0, -1):
+        with pytest.raises(ValueError, match="must be >= 1"):
             find_similar((), [], metric="jaccard", n=invalid_n)

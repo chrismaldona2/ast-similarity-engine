@@ -4,6 +4,10 @@ import re
 from src.models import FunctionNode
 from src.normalizer import normalize_function
 
+# Default to False for the reasons proven by calibrate.py 
+# (better separation margin for reordered independent lines).
+DEFAULT_INDEX_VARS = False
+
 # Context nodes carry no structure and only add trivial, high-frequency n-grams.
 _OMITTED_NODES = (ast.Load, ast.Store, ast.Del)
 
@@ -28,10 +32,8 @@ def _node_value(node: ast.AST) -> str | None:
         return node.name
     if isinstance(node, ast.ImportFrom):
         return node.module  # None for relative imports like 'from . import x'
-    if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+    if isinstance(node, ast.ExceptHandler):
         return node.name
-    if isinstance(node, ast.MatchMapping):
-        return node.rest
     return None
 
 
@@ -57,7 +59,7 @@ def serialize_tree(node: ast.AST) -> list[str]:
     return tokens
 
 
-def function_tokens(func: FunctionNode, index_vars: bool = True) -> list[str]:
+def function_tokens(func: FunctionNode, index_vars: bool = DEFAULT_INDEX_VARS) -> list[str]:
     """Normalize a function and serialize it in pre-order.
 
     With index_vars=False, VAR1, VAR2, ... collapse into a single VAR token,

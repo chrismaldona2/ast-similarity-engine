@@ -2,9 +2,8 @@ import ast
 import pytest
 
 from tests.pairs import PAIRS, parse_fn
-from src.serializer import function_tokens
+from src.serializer import function_tokens, DEFAULT_INDEX_VARS
 from src.similarity import (
-    DEFAULT_INDEX_VARS,
     THRESHOLDS,
     compute_similarity,
     default_threshold,
@@ -17,7 +16,6 @@ from src.similarity import (
 
 def _func(source: str) -> ast.FunctionDef:
     return ast.parse(source).body[0]
-
 
 def test_ngrams_basic_and_short_sequences():
     tokens = ["A", "B", "C", "D"]
@@ -140,5 +138,3 @@ def test_threshold_separates_clones_from_non_clones(
     tok_b = function_tokens(parse_fn(code_b), index_vars=DEFAULT_INDEX_VARS)
     score = compute_similarity(tok_a, tok_b, metric=metric)
     assert (score >= THRESHOLDS[metric]) == is_clone, f"{label}: {score:.3f}"
-    
-    

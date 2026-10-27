@@ -1,6 +1,5 @@
 import argparse
 import logging
-import math
 import sys
 from pathlib import Path
 
@@ -12,6 +11,7 @@ from src.engine import (
     tokens_from_source,
 )
 from src.extractor import extract_functions
+from src.serializer import DEFAULT_INDEX_VARS
 from src.similarity import METRICS, default_threshold
 
 
@@ -28,8 +28,10 @@ def build_parser() -> argparse.ArgumentParser:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--function",
+        "--funcion",
+        dest="function",
         type=str,
-        help="Target function inside the scanned directory (e.g., 'src/models.py:FunctionInfo').",
+        help="Target function inside the scanned directory (e.g., 'pkg/mod.py:my_func').",
     )
     group.add_argument(
         "--query-file",
@@ -62,6 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show only results that meet the similarity threshold.",
     )
+    parser.add_argument(
+        "--index-vars",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_INDEX_VARS,
+        help="Preserve variable identity mapping (e.g. VAR1 vs VAR2). Defaults to False to tolerate reordered lines.",
+    )
     return parser
 
 
@@ -69,19 +77,6 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
     parser = build_parser()
     args = parser.parse_args(argv)
-
-    # Early validation
-    if args.top_k < 1:
-        print("Error: --top-k must be >= 1", file=sys.stderr)
-        return 1
-    if args.threshold is not None and (
-        not math.isfinite(args.threshold) or not (0.0 <= args.threshold <= 1.0)
-    ):
-        print(
-            f"Error: --threshold must be a finite number between 0.0 and 1.0, got {args.threshold}",
-            file=sys.stderr,
-        )
-        return 1
 
     root_dir = args.dir
     if not root_dir.is_dir():
@@ -97,8 +92,8 @@ def main(argv: list[str] | None = None) -> int:
         print("No Python functions found to compare against.", file=sys.stderr)
         return 1
 
-    print("Building AST index... ", end="", flush=True, file=sys.stderr)
-    index = build_index(functions)
+    print(f"Building AST index (index_vars={args.index_vars})... ", end="", flush=True, file=sys.stderr)
+    index = build_index(functions, index_vars=args.index_vars)
     print(f"Indexed {len(index)} functions.\n", file=sys.stderr)
     
     if not index:
@@ -119,10 +114,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Target: {target_func.identifier} (Line {target_func.lineno})", file=sys.stderr)
         else:
             if args.query_file == "-":
-                try:
-                    sys.stdin.reconfigure(encoding="utf-8-sig")
-                except AttributeError:
-                    pass  # Fallback if stdin is mocked in tests
                 code = sys.stdin.read()
                 print("Target: First function from <stdin>", file=sys.stderr)
             else:
@@ -135,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise TargetError(f"Could not read query file {q_path}: {exc}") from exc
                 print(f"Target: First function in {q_path}", file=sys.stderr)
             
-            target_tokens = tokens_from_source(code)
+            target_tokens = tokens_from_source(code, index_vars=args.index_vars)
 
         print(f"Metric: {args.metric} (Threshold >= {threshold:.2f})\n", file=sys.stderr)
 

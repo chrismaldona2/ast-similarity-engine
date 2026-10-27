@@ -6,7 +6,6 @@ METRICS: tuple[Metric, ...] = ("jaccard", "levenshtein")
 
 # Default parameters calibrated via lab/calibrate.py.
 DEFAULT_NGRAM_SIZE = 3
-DEFAULT_INDEX_VARS = False
 
 THRESHOLDS: dict[Metric, float] = {
     "jaccard": 0.50,
